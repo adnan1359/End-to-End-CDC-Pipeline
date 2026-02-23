@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # 1. The Source: Hacked Lightweight MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: cdc_mysql
+    command: 
+      # MEMORY HACKS: These two lines cut RAM usage by roughly 70%
+      - --performance_schema=0 
+      - --innodb_buffer_pool_size=32M
+      # CDC CONFIG: These lines turn on the Change Data Capture engine
+      - --server-id=1
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --binlog-row-image=FULL
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: retail
+    ports:
+      - "3306:3306"
+
+  # 2. The Agent: Lightweight Debezium Server
+  debezium:
+    image: quay.io/debezium/server:latest
+    container_name: cdc_agent
+    depends_on:
+      - mysql
+    volumes:
+      # We map a local config folder to the container to control the routing
+      - ./conf:/debezium/conf

@@ -1,0 +1,40 @@
+kafka-debezium-cdc-project/
+├── docker-compose.yml                 # Docker setup (copy-paste ready)
+├── .env                               # Environment variables
+├── .gitignore                         # Git ignore file
+├── README.md                          # How to get started
+├── requirements.txt                   # Python packages to install
+│
+├── config/                            # Configuration files
+│   ├── connector-config.json          # Debezium connector setup
+│   └── settings.py                    # Python settings (simple)
+│
+├── database/                          # Database setup
+│   ├── init.sql                       # Create tables script
+│   └── seed-data.sql                  # Sample test data
+│
+├── app/                               # Main application code
+│   ├── __init__.py
+│   ├── consumer.py                    # Read events from Kafka
+│   ├── producer.py                    # Send events to Kafka
+│   └── database.py                    # Connect to PostgreSQL
+│
+├── scripts/                           # Helper scripts (run these)
+│   ├── 1-setup.sh                     # First time setup
+│   ├── 2-start.sh                     # Start everything
+│   ├── 3-register-connector.py        # Register Debezium
+│   ├── 4-insert-test-data.py          # Add test data
+│   ├── 5-view-messages.sh             # See Kafka messages
+│   └── 6-stop.sh                      # Stop everything
+│
+├── tests/                             # Simple tests
+│   ├── __init__.py
+│   └── test_consumer.py               # Test consumer
+│
+├── logs/                              # Log files (created automatically)
+│   └── .gitkeep
+│
+└── docs/                              # Documentation
+    ├── QUICK_START.md                 # Get running in 5 minutes
+    ├── HOW_IT_WORKS.md                # Understand the flow
+    └── TROUBLESHOOTING.md             # Fix common issues

@@ -1,108 +1,131 @@
+version: '3.8'
+
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: cdc-postgres
+  # Lightweight Kafka with minimal memory footprint
+  kafka:
+    image: confluentinc/cp-kafka:7.5-alpine
+    container_name: kafka-minimal
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: orders
-    command: >
-      postgres
-      -c wal_level=logical
-      -c max_replication_slots=10
-      -c max_wal_senders=10
-      -c shared_buffers=64MB
-      -c work_mem=4MB
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Minimal memory allocation
+      KAFKA_HEAP_OPTS: "-Xms128M -Xmx256M"
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Lightweight Zookeeper (single node)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5-alpine
+    container_name: zookeeper-minimal
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_INIT_LIMIT: 5
+      SERVER_JVMFLAGS: "-Xms64M -Xmx128M"
+    ports:
+      - "2181:2181"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # PostgreSQL with CDC enabled (lightweight alternative to MySQL)
+  postgres:
+    image: debezium/postgres:17-alpine
+    container_name: postgres-cdc
+    environment:
+      POSTGRES_DB: cdc_db
+      POSTGRES_USER: cdc_user
+      POSTGRES_PASSWORD: cdc_password
+      POSTGRES_INITDB_ARGS: "-c wal_level=logical -c max_wal_senders=1 -c max_replication_slots=1"
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d orders"]
-      interval: 5s
-      timeout: 3s
-      retries: 30
-
-  kafka:
-    image: bitnami/kafka:3.7
-    container_name: cdc-kafka
-    ports:
-      - "9092:9092"
-    environment:
-      # KRaft mode = no Zookeeper (less resources)
-      KAFKA_CFG_NODE_ID: 1
-      KAFKA_CFG_PROCESS_ROLES: broker,controller
-      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-
-      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-
-      # Single-broker safe defaults
-      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_CFG_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
-      # Keep memory low
-      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
-      ALLOW_PLAINTEXT_LISTENER: "yes"
-    volumes:
-      - kafkadata:/bitnami/kafka
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/bitnami/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "pg_isready -U cdc_user -d cdc_db"]
       interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.5'
 
-  connect:
-    image: debezium/connect:2.5
-    container_name: cdc-connect
+  # Debezium Connect with minimal config
+  debezium-connect:
+    image: debezium/connect:2.5-alpine
+    container_name: debezium-connect
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # Minimal memory for Debezium
+      KAFKA_HEAP_OPTS: "-Xms256M -Xmx512M"
+    ports:
+      - "8083:8083"
     depends_on:
       kafka:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    ports:
-      - "8083:8083"
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+
+  # Lightweight CLI tool for testing (optional)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
     environment:
-      BOOTSTRAP_SERVERS: kafka:9092
-      GROUP_ID: "1"
-
-      CONFIG_STORAGE_TOPIC: connect_configs
-      OFFSET_STORAGE_TOPIC: connect_offsets
-      STATUS_STORAGE_TOPIC: connect_statuses
-
-      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
-      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
-      STATUS_STORAGE_REPLICATION_FACTOR: "1"
-
-      # Use JSON to keep things beginner-friendly (no Avro yet)
-      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-
-      # Keep memory low
-      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:8083/connectors >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-
-  # Optional debugging tool (very small and useful)
-  kcat:
-    image: edenhill/kcat:1.7.1
-    container_name: cdc-kcat
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8080:8080"
     depends_on:
-      kafka:
-        condition: service_healthy
-    entrypoint: ["sh", "-c", "sleep infinity"]
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
 
 volumes:
-  pgdata:
-  kafkadata:
-``
+  postgres_data:
+    driver: local
+
+networks:
+  default:
+    name: cdc-network
